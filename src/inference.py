@@ -6,12 +6,14 @@ import torchvision
 import argparse
 import numpy as np
 from utils import imshow, preprocess_labels, preprocess_old, generate_noise
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-i", "--inp", help="Inference input")
 args = parser.parse_args()
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+num_gpus = torch.cuda.device_count()
+device = torch.device("cuda:0" if num_gpus >= 1 else "cpu")
 
 
 def init_inference():
@@ -54,7 +56,7 @@ def init_old():
 
 def inference_tb(inp, writer):
     lm, gen = init_inference()
-    checkpoint = torch.load(f"{config.OUT_DIR}/checkpoint.pt")
+    checkpoint = torch.load(f"{config.OUT_DIR}/checkpoint.pt", map_location=device, weights_only=False)
 
     ctoi_file = open(f"{config.BASE_DIR}/src/ctoi.txt", "rb")
     encoding_dict = pickle.load(ctoi_file)
@@ -79,9 +81,11 @@ def inference_tb(inp, writer):
     # print(f'Inference Finished. Check "out" directory for {args.inp}.png')
 
 
-def inference(inp, filename):
+def inference(inp, filename, current_log):
+
+    os.makedirs(f"{config.OUT_DIR}/{current_log}/inference", exist_ok=True)
     lm, gen = init_inference()
-    checkpoint = torch.load(f"{config.OUT_DIR}/checkpoint.pt")
+    checkpoint = torch.load(f"{config.OUT_DIR}/{current_log}/checkpoint.pt",  map_location=device, weights_only=False)
 
     ctoi_file = open(f"{config.BASE_DIR}/src/ctoi.txt", "rb")
     encoding_dict = pickle.load(ctoi_file)
@@ -98,7 +102,7 @@ def inference(inp, filename):
         gin = lm(test.to(device))
         gout = gen(zin, gin)
         tgrid = torchvision.utils.make_grid(gout.detach().cpu(), nrow=4)
-        imshow(tgrid, f"{config.OUT_DIR}/inference/{filename}.png")
+        imshow(tgrid, f"{config.OUT_DIR}/{current_log}/inference/{filename}.png")
 
     print(f'Inference Finished. Check "out" directory for {filename}.png')
 

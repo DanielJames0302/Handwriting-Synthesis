@@ -1,2 +1,10 @@
 *.sh
 .idea
+/src/out
+src/__pycache__/
+# training artifacts
+src/logs/
+src/runs/
+*.tfevents
+*.out
+*.err

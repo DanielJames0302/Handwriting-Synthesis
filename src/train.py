@@ -7,11 +7,14 @@ import argparse
 import numpy as np
 import torchvision
 from tqdm import tqdm
+import os
+from torchvision.utils import save_image
 
 import torch.nn as nn
 import torch.optim as optim
 from dataset import get_dataloader
 from inference import inference
+from datetime import datetime
 
 # from lookahead import Lookahead
 # from augment import DiffAugment
@@ -50,10 +53,11 @@ args = parser.parse_args()
 
 # Define global constants
 torch.backends.cudnn.benchmark = True
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device2 = torch.device("cuda:1")
+num_gpus = torch.cuda.device_count()
+device = torch.device("cuda:0" if num_gpus >= 1 else "cpu")
+device2 = torch.device("cuda:1" if num_gpus >= 2 else device)
 dis_stats = {"std": 0, "vars": []}
-current_log = args.log
+current_log = config.LOG
 writer = SummaryWriter(f"{config.RUNS_DIR}/{current_log}")
 policy = "color,translation,cutout"
 
@@ -79,14 +83,41 @@ def init_models():
 
     return lm, gen, dis, rec
 
+def _normalize_betas(b):
+    # Accept tuple/list/np types/strings like "0.9,0.999"
+    if isinstance(b, str):
+        parts = b.replace(";", ",").replace("/", ",").split(",")
+        if len(parts) != 2:
+            raise ValueError(f"BETAS string must have two numbers, got: {b}")
+        return (float(parts[0]), float(parts[1]))
+    if isinstance(b, (list, tuple)):
+        if len(b) != 2:
+            raise ValueError(f"BETAS must have length 2, got: {b}")
+        return (float(b[0]), float(b[1]))
+    # Fallback: single object with .__iter__ (e.g., numpy array)
+    try:
+        b0, b1 = b  # may raise
+        return (float(b0), float(b1))
+    except Exception as e:
+        raise ValueError(f"Unrecognized BETAS format: {b}") from e
+
+# def init_optim(lm, gen, dis, rec):
+#     """Returns initialized Adam optimizers"""
+#     lm_opt = optim.Adam(lm.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
+#     gen_opt = optim.Adam(gen.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
+#     dis_opt = optim.Adam(dis.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
+#     rec_opt = optim.Adam(rec.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
+
+#     return lm_opt, gen_opt, dis_opt, rec_opt
 
 def init_optim(lm, gen, dis, rec):
-    """Returns initialized Adam optimizers"""
-    lm_opt = optim.Adam(lm.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
-    gen_opt = optim.Adam(gen.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
-    dis_opt = optim.Adam(dis.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
-    rec_opt = optim.Adam(rec.parameters(), lr=config.LEARNING_RATE, betas=config.BETAS)
+    betas = _normalize_betas(getattr(config, "BETAS", (0.9, 0.999)))
+    lr = float(getattr(config, "LEARNING_RATE", 1e-4))
 
+    lm_opt  = optim.Adam(lm.parameters(),  lr=lr, betas=betas)
+    gen_opt = optim.Adam(gen.parameters(), lr=lr, betas=betas)
+    dis_opt = optim.Adam(dis.parameters(), lr=lr, betas=betas)
+    rec_opt = optim.Adam(rec.parameters(), lr=lr, betas=betas)
     return lm_opt, gen_opt, dis_opt, rec_opt
 
 
@@ -111,7 +142,7 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
     ctc_criterion = nn.CTCLoss(zero_infinity=True)
 
     if from_checkpoint:
-        point = torch.load(f"{config.OUT_DIR}/checkpoint.pt")
+        point = torch.load(f"{config.CHECKPOINT_PATH}/checkpoint.pt")
         lm.load_state_dict(point["lm"])
         gen.load_state_dict(point["gen"])
         dis.load_state_dict(point["dis"])
@@ -126,6 +157,17 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
     dis_losses = []
     rec_losses = []
     count = 1
+    img_t, label, length = trainloader.dataset[0]
+
+    # 2) Unnormalize: x = x*std + mean  (here mean=0.5, std=0.5)
+    img_show = img_t * 0.5 + 0.5
+    img_show = img_show.clamp(0, 1)
+    
+    out_path = f"{config.OUT_DIR}/{current_log}/debug"
+    os.makedirs(out_path, exist_ok=True)
+
+    # make sure it's on CPU
+    save_image(img_show.detach().cpu(), f"{out_path}/sample0.png")
 
     for epoch in range(epochs):
         gen_loss_epoch = []
@@ -259,6 +301,7 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
         writer.add_scalar("R loss", rec_epoch, epoch)
 
         # Creating model checkpoint
+        os.makedirs(f"{config.OUT_DIR}/{current_log}/", exist_ok=True)
         if (epoch + 1) % checkpoint_interval == 0:
             torch.save(
                 {
@@ -277,12 +320,12 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
                     "rec_loss": rec_epoch,
                     "log_file": current_log,
                 },
-                f"{config.OUT_DIR}/checkpoint.pt",
+                f"{config.OUT_DIR}/{current_log}/checkpoint.pt",
             )
-        inference("amit", str(epoch))
+            inference("amit", str(epoch), current_log)
 
     print("Training Finished")
 
 
 if __name__ == "__main__":
-    train(epochs=args.epochs, from_checkpoint=args.checkpoint)
+    train(epochs=config.EPOCHS, from_checkpoint=True, checkpoint_interval=config.CHECKPOINT_INTERVAL)

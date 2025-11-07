@@ -33,13 +33,14 @@ class HandwritingDataset(Dataset):
         # image = Image.fromarray(image)
         image = Image.open(img_loc).convert("L")
         tensor_image = self.transforms(image)
-        label = self.all_imgs[idx].split(" ")[0].split(".")[0]
+        label = self.all_imgs[idx].split("-")[0]
 
         return tensor_image, label, len(label)
 
 
 def get_dataloader():
     """Convenience function that returns dataset and dataloader objects"""
+    config.SRC_DIR=f"/home/m/man0302/CS4243/project/CS4243-CAPTCHA/Datasets/full/val"
     trainset = HandwritingDataset(config.SRC_DIR, src_transforms)
     trainloader = DataLoader(
         trainset, config.BATCH_SIZE, shuffle=True, drop_last=True, num_workers=4

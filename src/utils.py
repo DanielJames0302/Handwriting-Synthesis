@@ -2,10 +2,11 @@ import torch
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
-
+import os
 
 def imshow(inp, filename):
     """Imshow for Tensor."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     fig = plt.figure(figsize=(8, 8))
     inp = (inp + 1) / 2
     inp = inp.numpy().transpose((1, 2, 0))
