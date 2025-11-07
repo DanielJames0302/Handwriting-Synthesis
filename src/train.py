@@ -142,7 +142,8 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
     ctc_criterion = nn.CTCLoss(zero_infinity=True)
 
     if from_checkpoint:
-        point = torch.load(f"{config.CHECKPOINT_PATH}/checkpoint.pt")
+        checkpoint_path = f"{config.OUT_DIR}/{current_log}/checkpoint.pt"
+        point = torch.load(checkpoint_path)
         lm.load_state_dict(point["lm"])
         gen.load_state_dict(point["gen"])
         dis.load_state_dict(point["dis"])
@@ -328,4 +329,4 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
 
 
 if __name__ == "__main__":
-    train(epochs=config.EPOCHS, from_checkpoint=True, checkpoint_interval=config.CHECKPOINT_INTERVAL)
+    train(epochs=config.EPOCHS, from_checkpoint=config.RESUME_FROM_CHECKPOINT, checkpoint_interval=config.CHECKPOINT_INTERVAL)
