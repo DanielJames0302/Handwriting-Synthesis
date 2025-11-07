@@ -12,7 +12,7 @@ device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 def test():
     rec = models.R().to(device)
-    checkpoint = torch.load(f"{config.OUT_DIR}/rec_checkpoint.pt")
+    checkpoint = torch.load(f"{config.OUT_DIR}/rec_checkpoint.pt", weights_only=False)
     rec.load_state_dict(checkpoint["model"])
 
     _, loader = get_dataloader()

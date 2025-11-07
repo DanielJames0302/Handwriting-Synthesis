@@ -113,10 +113,11 @@ def _normalize_betas(b):
 def init_optim(lm, gen, dis, rec):
     betas = _normalize_betas(getattr(config, "BETAS", (0.9, 0.999)))
     lr = float(getattr(config, "LEARNING_RATE", 1e-4))
+    dis_lr_mult = float(getattr(config, "DISCRIMINATOR_LR_MULTIPLIER", 0.1))
 
     lm_opt  = optim.Adam(lm.parameters(),  lr=lr, betas=betas)
     gen_opt = optim.Adam(gen.parameters(), lr=lr, betas=betas)
-    dis_opt = optim.Adam(dis.parameters(), lr=lr, betas=betas)
+    dis_opt = optim.Adam(dis.parameters(), lr=lr * dis_lr_mult, betas=betas)
     rec_opt = optim.Adam(rec.parameters(), lr=lr, betas=betas)
     return lm_opt, gen_opt, dis_opt, rec_opt
 
@@ -139,11 +140,14 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
 
     _, trainloader = get_dataloader()
     stddev = 1
+    noise_stddev_min = float(getattr(config, "NOISE_STDDEV_MIN", 0.1))
+    noise_decay_rate = float(getattr(config, "NOISE_DECAY_RATE", 0.00001))
+    dis_train_freq = int(getattr(config, "DISCRIMINATOR_TRAIN_FREQ", 2))
     ctc_criterion = nn.CTCLoss(zero_infinity=True)
 
     if from_checkpoint:
         checkpoint_path = f"{config.OUT_DIR}/{current_log}/checkpoint.pt"
-        point = torch.load(checkpoint_path)
+        point = torch.load(checkpoint_path, weights_only=False)
         lm.load_state_dict(point["lm"])
         gen.load_state_dict(point["gen"])
         dis.load_state_dict(point["dis"])
@@ -177,7 +181,8 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
 
         for batch in tqdm(trainloader):
             noise = torch.distributions.normal.Normal(0, stddev)
-            stddev -= 0.00001
+            # Decay noise but maintain minimum floor
+            stddev = max(noise_stddev_min, stddev - noise_decay_rate)
 
             imgs, labels, lens = batch
             imgs = imgs.to(device)
@@ -186,7 +191,12 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
             lens = torch.LongTensor(lens).to(device)
 
             # ========= Train Discriminator and R =========
-            dis_opt.zero_grad()
+            # Train discriminator less frequently to prevent overpowering
+            # Train on steps 1, dis_train_freq+1, 2*dis_train_freq+1, etc.
+            train_discriminator = ((count - 1) % dis_train_freq == 0)
+            
+            if train_discriminator:
+                dis_opt.zero_grad()
             rec_opt.zero_grad()
 
             z_dis = generate_noise(config.Z_LEN, config.BATCH_SIZE, device)
@@ -201,15 +211,29 @@ def train(epochs=1, from_checkpoint=False, checkpoint_interval=1):
             dis_out_real = dis(imgs + noise.sample(imgs.shape).to(device))
 
             rec_out_dis = rec(imgs.to(device2))
-            dis_loss = dis_criterion(dis_out_fake, dis_out_real)
+            
+            if train_discriminator:
+                label_smoothing = float(getattr(config, "DISCRIMINATOR_LABEL_SMOOTHING", 0.1))
+                dis_loss = dis_criterion(dis_out_fake, dis_out_real, label_smoothing=label_smoothing)
+                dis_loss_epoch.append(dis_loss.detach().cpu().numpy())
+                
+                # Log discriminator output statistics
+                writer.add_scalar("dis_out_real_mean", dis_out_real.mean().item(), count)
+                writer.add_scalar("dis_out_fake_mean", dis_out_fake.mean().item(), count)
+                writer.add_scalar("dis_out_real_std", dis_out_real.std().item(), count)
+                writer.add_scalar("dis_out_fake_std", dis_out_fake.std().item(), count)
+                
+                dis_loss.backward()
+                dis_opt.step()
+            else:
+                # Still log discriminator outputs even when not training
+                dis_loss_epoch.append(0.0)  # Placeholder
+                writer.add_scalar("dis_out_real_mean", dis_out_real.mean().item(), count)
+                writer.add_scalar("dis_out_fake_mean", dis_out_fake.mean().item(), count)
+            
             rec_loss = compute_ctc_loss(ctc_criterion, rec_out_dis, ctc_labels, lens)
-            dis_loss_epoch.append(dis_loss.detach().cpu().numpy())
             rec_loss_epoch.append(rec_loss.detach().cpu().numpy())
-
-            dis_loss.backward()
             rec_loss.backward()
-
-            dis_opt.step()
             rec_opt.step()
 
             # Creating Histograms of weights

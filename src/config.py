@@ -20,6 +20,11 @@ CHUNKS = 8
 CBN_MLP_DIM = 512
 RELEVANCE_FACTOR = 1
 LEARNING_RATE = 2e-4
+DISCRIMINATOR_LR_MULTIPLIER = 0.1  # Discriminator LR will be LEARNING_RATE * this value
+DISCRIMINATOR_TRAIN_FREQ = 2  # Train discriminator every N generator steps (1 = every step)
+DISCRIMINATOR_LABEL_SMOOTHING = 0.1  # Label smoothing for discriminator (0.0-1.0)
+NOISE_STDDEV_MIN = 0.1  # Minimum noise standard deviation floor
+NOISE_DECAY_RATE = 0.00001  # Noise decay per batch
 BETAS = (0, 0.999)
 EPOCHS=6000
 CHECKPOINT_INTERVAL=10
